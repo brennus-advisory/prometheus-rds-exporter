@@ -113,7 +113,7 @@ func (e *EC2Fetcher) GetDBInstanceTypeInformation(instanceTypes []string) (Metri
 			if i.NetworkInfo != nil && i.NetworkInfo.NetworkCards != nil && len(i.NetworkInfo.NetworkCards) > 0 {
 				// Use the baseline bandwidth from the first network card (primary network interface)
 				if i.NetworkInfo.NetworkCards[0].BaselineBandwidthInGbps != nil {
-					instanceMetrics.BaselineNetworkBandwidth = converter.GigaBytesToBytesSI(aws.ToFloat64(i.NetworkInfo.NetworkCards[0].BaselineBandwidthInGbps))
+					instanceMetrics.BaselineNetworkBandwidth = converter.GigaBytesToBytesSI(aws.ToFloat64(i.NetworkInfo.NetworkCards[0].BaselineBandwidthInGbps)) / 8
 				}
 			}
 
