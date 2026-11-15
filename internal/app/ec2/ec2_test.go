@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	aws_ec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
+	aws_ec2_types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/qonto/prometheus-rds-exporter/internal/app/ec2"
 	mock "github.com/qonto/prometheus-rds-exporter/internal/app/ec2/mock"
 	converter "github.com/qonto/prometheus-rds-exporter/internal/app/unit"
@@ -78,4 +81,84 @@ func TestGetDBInstanceTypeInformation(t *testing.T) {
 			assert.Equal(t, tc.maximumThroughput, instance.MaximumThroughput, "Maximum throughput don't match")
 		})
 	}
+}
+
+func TestGetDBInstanceTypeInformationNetworkBandwidth(t *testing.T) {
+	testCases := []struct {
+		name        string
+		networkInfo *aws_ec2_types.NetworkInfo
+		wantBytes   float64
+	}{
+		{
+			name: "eight gigabits",
+			networkInfo: &aws_ec2_types.NetworkInfo{NetworkCards: []aws_ec2_types.NetworkCardInfo{
+				{BaselineBandwidthInGbps: aws.Float64(8)},
+			}},
+			wantBytes: 1_000_000_000,
+		},
+		{
+			name: "one gigabit",
+			networkInfo: &aws_ec2_types.NetworkInfo{NetworkCards: []aws_ec2_types.NetworkCardInfo{
+				{BaselineBandwidthInGbps: aws.Float64(1)},
+			}},
+			wantBytes: 125_000_000,
+		},
+		{
+			name: "fractional gigabit",
+			networkInfo: &aws_ec2_types.NetworkInfo{NetworkCards: []aws_ec2_types.NetworkCardInfo{
+				{BaselineBandwidthInGbps: aws.Float64(0.5)},
+			}},
+			wantBytes: 62_500_000,
+		},
+		{
+			name: "zero bandwidth",
+			networkInfo: &aws_ec2_types.NetworkInfo{NetworkCards: []aws_ec2_types.NetworkCardInfo{
+				{BaselineBandwidthInGbps: aws.Float64(0)},
+			}},
+		},
+		{name: "missing network info"},
+		{name: "nil network cards", networkInfo: &aws_ec2_types.NetworkInfo{}},
+		{
+			name:        "empty network cards",
+			networkInfo: &aws_ec2_types.NetworkInfo{NetworkCards: []aws_ec2_types.NetworkCardInfo{}},
+		},
+		{
+			name: "missing bandwidth",
+			networkInfo: &aws_ec2_types.NetworkInfo{NetworkCards: []aws_ec2_types.NetworkCardInfo{
+				{},
+			}},
+		},
+		{
+			name: "primary network card only",
+			networkInfo: &aws_ec2_types.NetworkInfo{NetworkCards: []aws_ec2_types.NetworkCardInfo{
+				{BaselineBandwidthInGbps: aws.Float64(8)},
+				{BaselineBandwidthInGbps: aws.Float64(16)},
+			}},
+			wantBytes: 1_000_000_000,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fetcher := ec2.NewFetcher(context.Background(), networkBandwidthEC2Client{networkInfo: tc.networkInfo})
+			result, err := fetcher.GetDBInstanceTypeInformation([]string{"db.t3.large"})
+
+			require.NoError(t, err)
+			instance, ok := result.Instances["db.t3.large"]
+			require.True(t, ok, "requested instance must be returned")
+			assert.Equal(t, tc.wantBytes, instance.BaselineNetworkBandwidth, "bandwidth must be in bytes per second")
+		})
+	}
+}
+
+type networkBandwidthEC2Client struct {
+	networkInfo *aws_ec2_types.NetworkInfo
+}
+
+func (c networkBandwidthEC2Client) DescribeInstanceTypes(_ context.Context, _ *aws_ec2.DescribeInstanceTypesInput, _ ...func(*aws_ec2.Options)) (*aws_ec2.DescribeInstanceTypesOutput, error) {
+	return &aws_ec2.DescribeInstanceTypesOutput{
+		InstanceTypes: []aws_ec2_types.InstanceTypeInfo{
+			{InstanceType: aws_ec2_types.InstanceTypeT3Large, NetworkInfo: c.networkInfo},
+		},
+	}, nil
 }
